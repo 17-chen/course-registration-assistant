@@ -1,0 +1,16 @@
+{
+  "name": "wku-course-registration-assistant",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A local, user-started course registration assistant for Ellucian Colleague Self-Service.",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test",
+    "check": "node --check src/server.js && node --check src/registration-runner.js && node --test"
+  },
+  "dependencies": {
+    "playwright-core": "^1.55.0",
+    "selenium-webdriver": "^4.35.0"
+  }
+}

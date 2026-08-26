@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>学校抢课助手</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script>
+    if (location.protocol === "file:") {
+      addEventListener("DOMContentLoaded", () => {
+        document.body.innerHTML = '<main style="max-width:720px;margin:80px auto;padding:32px;font-family:-apple-system,PingFang SC,sans-serif;line-height:1.7"><h1>启动方式不正确</h1><p>这个页面不能直接作为 HTML 文件打开，否则按钮没有后台服务可以连接。</p><p>请关闭本页，然后在 Finder 中双击项目里的 <b>启动抢课助手.command</b>。正确页面地址应为：</p><p style="padding:14px;background:#eef5f0;border-radius:10px"><b>http://127.0.0.1:43127</b></p></main>';
+      });
+    }
+  </script>
+</head>
+<body>
+  <div class="school-bar">
+    <div class="brand-mark"><span class="seal">K</span><strong>KEAN</strong><i></i><b>STUDENT PLANNING</b></div>
+    <div id="statusPill" class="status idle"><span></span><b>未运行</b></div>
+  </div>
+  <nav class="crumbs">Academics <span>›</span> Student Planning <span>›</span> Course Assistant</nav>
+  <aside class="notice-strip"><b>COURSE REGISTRATION ASSISTANT</b><span>本工具仅在当前 Mac 运行，关闭启动终端后停止。</span></aside>
+
+  <main class="shell">
+    <header class="page-title">
+      <div><p class="eyebrow">PLAN &amp; SCHEDULE</p><h1>学校抢课助手</h1><p class="subtitle">选择运行模式，然后让助手在专用 Chrome 中执行。</p></div>
+    </header>
+
+    <section class="card browser-card">
+      <div>
+        <h2>1. 登录与页面</h2>
+        <p>选择浏览器后打开学校网站。Chrome 和 Edge 可保存专用登录状态；Safari 自动化窗口通常需要重新登录。</p>
+      </div>
+      <div class="browser-choice">
+        <label for="browserChoice">运行浏览器</label>
+        <select id="browserChoice">
+          <option value="chrome">Google Chrome（推荐）</option>
+          <option value="edge">Microsoft Edge</option>
+          <option value="safari">Safari</option>
+        </select>
+        <small id="browserHint">已检测到 Chrome，可保存独立登录状态。</small>
+      </div>
+      <div class="url-row">
+        <input id="portalUrl" aria-label="学校网站地址">
+        <button id="openPortal" class="secondary">打开学校网站</button>
+        <button id="scanPage" class="secondary">读取当前页面</button>
+      </div>
+      <p id="loginState" class="hint">Chrome 尚未启动</p>
+    </section>
+
+    <section class="card modes-card">
+      <h2>2. 选择运行方式</h2>
+      <div class="mode-grid">
+        <label class="mode active">
+          <input type="radio" name="mode" value="monitor" checked>
+          <span><b>退课空位监控</b><small>发现余位后立即进入注册流程</small></span>
+        </label>
+        <label class="mode">
+          <input type="radio" name="mode" value="scheduled">
+          <span><b>固定时间抢课</b><small>到北京时间后点击 Register Now</small></span>
+        </label>
+      </div>
+      <div id="scheduleFields" class="schedule-picker hidden">
+        <div class="date-field">
+          <label for="startDate">开放日期（北京时间）</label>
+          <input id="startDate" type="date">
+        </div>
+        <div class="wheel-field">
+          <label>开放时间</label>
+          <div class="time-wheel" aria-label="开放时间轮盘">
+            <div class="wheel-highlight"></div>
+            <div class="wheel-column" data-unit="hour" aria-label="小时"></div><b>:</b>
+            <div class="wheel-column" data-unit="minute" aria-label="分钟"></div><b>:</b>
+            <div class="wheel-column" data-unit="second" aria-label="秒"></div>
+          </div>
+          <div class="wheel-labels"><span>时</span><span>分</span><span>秒</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="sectionCard" class="card">
+      <div class="section-heading">
+        <div>
+          <h2>3. 选择 Section</h2>
+          <p>每行一个 Section Name，按从上到下的优先级尝试，任意一个成功后停止。</p>
+        </div>
+        <span id="sectionCount" class="count">0 个</span>
+      </div>
+      <textarea id="sections" rows="5" placeholder="例如：&#10;CPS*2390*W03&#10;CPS*2390*W04"></textarea>
+      <div id="detectedSections" class="chips"></div>
+      <p class="plan-note">当前版本要求候选 Section 已提前点击 Add 加入 Plan；这样发现余位后可以直接进入 Register Now。</p>
+    </section>
+
+    <section class="card settings-grid">
+      <div id="intervalField" class="field">
+        <label for="interval">监控刷新间隔</label>
+        <div class="unit-input"><input id="interval" type="number" min="1" max="60" value="5"><span>秒</span></div>
+      </div>
+      <label class="switch-field">
+        <span><b>演练模式</b><small>不点击注册；空位监控会继续运行，定时模式到点后停止</small></span>
+        <input id="dryRun" type="checkbox" checked>
+      </label>
+    </section>
+
+    <section class="console-card">
+      <div class="console-top"><span>运行状态</span><time id="lastCheck">尚未检查</time></div>
+      <p id="message">等待你打开学校网站</p>
+      <div class="progress"><span id="progressBar"></span></div>
+    </section>
+
+    <div class="actions">
+      <button id="start" class="primary">开始运行</button>
+      <button id="stop" class="danger" disabled>停止</button>
+      <button id="testNotify" class="ghost">测试通知</button>
+    </div>
+
+    <p class="footnote">真实提交前请先完成一次演练。遇到冲突、先修课、权限或学分限制时，助手会停止并通知你。</p>
+  </main>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
