@@ -54,7 +54,7 @@ WKU-Course-Assistant-0.1.0-arm64.dmg
 2. 把 `WKU Course Assistant` 拖入 `Applications`。
 3. 从“应用程序”启动。
 
-当前安装包没有 Apple Developer 签名。首次打开如果 macOS 阻止运行，请在 Finder 中右键应用、选择“打开”，然后在确认窗口中再次选择“打开”。不要在无法确认下载来源时绕过系统安全提示。
+当前安装包使用本机临时签名，但没有 Apple Developer 公证。首次打开如果 macOS 阻止运行，请在 Finder 中右键应用、选择“打开”，然后在确认窗口中再次选择“打开”。不要在无法确认下载来源时绕过系统安全提示。
 
 安装版不需要另外安装 Node.js。浏览器登录数据、运行日志和截图存放在：
 

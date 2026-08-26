@@ -1,6 +1,6 @@
 {
   "name": "wku-course-registration-assistant",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "A local, user-started course registration assistant for Ellucian Colleague Self-Service.",
   "author": "17-chen",
@@ -25,6 +25,7 @@
     "appId": "com.local.wkucourseassistant",
     "productName": "WKU Course Assistant",
     "asar": false,
+    "afterPack": "electron/after-pack.cjs",
     "files": [
       "electron/**/*",
       "public/**/*",
@@ -38,7 +39,9 @@
     },
     "mac": {
       "category": "public.app-category.productivity",
-      "target": ["dmg"],
+      "target": [
+        "dmg"
+      ],
       "identity": null
     },
     "dmg": {
