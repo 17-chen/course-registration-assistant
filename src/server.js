@@ -5,11 +5,7 @@ import { fileURLToPath } from "node:url";
 import { RegistrationRunner, DEFAULT_URL } from "./registration-runner.js";
 
 const srcDir = path.dirname(fileURLToPath(import.meta.url));
-const rootDir = path.dirname(srcDir);
-const publicDir = path.join(rootDir, "public");
-const runner = new RegistrationRunner({ rootDir });
-const clients = new Set();
-const port = Number(process.env.COURSE_ASSISTANT_PORT || 43127);
+const defaultAppRoot = path.dirname(srcDir);
 
 function json(response, status, data) {
   response.writeHead(status, { "Content-Type": "application/json; charset=utf-8" });
@@ -22,57 +18,86 @@ async function body(request) {
   return value ? JSON.parse(value) : {};
 }
 
-function broadcast(state) {
-  const payload = `data: ${JSON.stringify(state)}\n\n`;
-  for (const client of clients) client.write(payload);
+export async function startAssistantServer({ appRoot = defaultAppRoot, dataRoot = appRoot, port = 43127 } = {}) {
+  const publicDir = path.join(appRoot, "public");
+  const runner = new RegistrationRunner({ rootDir: dataRoot });
+  const clients = new Set();
+
+  function broadcast(state) {
+    const payload = `data: ${JSON.stringify(state)}\n\n`;
+    for (const client of clients) client.write(payload);
+  }
+
+  runner.on("state", broadcast);
+
+  const server = http.createServer(async (request, response) => {
+    try {
+      const url = new URL(request.url, `http://${request.headers.host}`);
+      if (request.method === "GET" && url.pathname === "/api/state") return json(response, 200, { ...runner.state, defaultUrl: DEFAULT_URL });
+      if (request.method === "GET" && url.pathname === "/api/events") {
+        response.writeHead(200, {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          Connection: "keep-alive",
+        });
+        response.write(`data: ${JSON.stringify(runner.state)}\n\n`);
+        clients.add(response);
+        request.on("close", () => clients.delete(response));
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/api/open") {
+        const input = await body(request);
+        return json(response, 200, await runner.openPortal(input.url, input.browser));
+      }
+      if (request.method === "POST" && url.pathname === "/api/scan") return json(response, 200, await runner.scanCurrentPage());
+      if (request.method === "POST" && url.pathname === "/api/start") return json(response, 200, await runner.start(await body(request)));
+      if (request.method === "POST" && url.pathname === "/api/stop") return json(response, 200, runner.stop());
+      if (request.method === "POST" && url.pathname === "/api/notify") {
+        const { notify } = await import("./notifier.js");
+        notify("抢课助手测试", "macOS 通知工作正常");
+        return json(response, 200, { ok: true });
+      }
+
+      const relative = url.pathname === "/" ? "index.html" : url.pathname.slice(1);
+      const file = path.join(publicDir, relative);
+      if (!file.startsWith(publicDir) || !fs.existsSync(file)) return json(response, 404, { error: "Not found" });
+      const type = file.endsWith(".css") ? "text/css" : file.endsWith(".js") ? "text/javascript" : "text/html";
+      response.writeHead(200, { "Content-Type": `${type}; charset=utf-8` });
+      fs.createReadStream(file).pipe(response);
+    } catch (error) {
+      json(response, 400, { error: error.message });
+    }
+  });
+
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, "127.0.0.1", resolve);
+  });
+
+  const address = server.address();
+  const actualPort = typeof address === "object" && address ? address.port : port;
+  const url = `http://127.0.0.1:${actualPort}`;
+
+  return {
+    runner,
+    server,
+    url,
+    async close() {
+      runner.stop("程序已退出");
+      await runner.browser.close();
+      for (const client of clients) client.end();
+      await new Promise((resolve) => server.close(resolve));
+    },
+  };
 }
 
-runner.on("state", broadcast);
-
-const server = http.createServer(async (request, response) => {
-  try {
-    const url = new URL(request.url, `http://${request.headers.host}`);
-    if (request.method === "GET" && url.pathname === "/api/state") return json(response, 200, { ...runner.state, defaultUrl: DEFAULT_URL });
-    if (request.method === "GET" && url.pathname === "/api/events") {
-      response.writeHead(200, {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-      });
-      response.write(`data: ${JSON.stringify(runner.state)}\n\n`);
-      clients.add(response);
-      request.on("close", () => clients.delete(response));
-      return;
-    }
-    if (request.method === "POST" && url.pathname === "/api/open") {
-      const input = await body(request);
-      return json(response, 200, await runner.openPortal(input.url, input.browser));
-    }
-    if (request.method === "POST" && url.pathname === "/api/scan") return json(response, 200, await runner.scanCurrentPage());
-    if (request.method === "POST" && url.pathname === "/api/start") return json(response, 200, await runner.start(await body(request)));
-    if (request.method === "POST" && url.pathname === "/api/stop") return json(response, 200, runner.stop());
-    if (request.method === "POST" && url.pathname === "/api/notify") {
-      const { notify } = await import("./notifier.js");
-      notify("抢课助手测试", "macOS 通知工作正常");
-      return json(response, 200, { ok: true });
-    }
-
-    const relative = url.pathname === "/" ? "index.html" : url.pathname.slice(1);
-    const file = path.join(publicDir, relative);
-    if (!file.startsWith(publicDir) || !fs.existsSync(file)) return json(response, 404, { error: "Not found" });
-    const type = file.endsWith(".css") ? "text/css" : file.endsWith(".js") ? "text/javascript" : "text/html";
-    response.writeHead(200, { "Content-Type": `${type}; charset=utf-8` });
-    fs.createReadStream(file).pipe(response);
-  } catch (error) {
-    json(response, 400, { error: error.message });
-  }
-});
-
-server.listen(port, "127.0.0.1", () => {
-  console.log(`抢课助手已启动：http://127.0.0.1:${port}`);
-});
-
-process.on("SIGINT", () => {
-  runner.stop("程序已退出");
-  server.close(() => process.exit(0));
-});
+const isDirectRun = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isDirectRun) {
+  const port = Number(process.env.COURSE_ASSISTANT_PORT || 43127);
+  const assistant = await startAssistantServer({ port });
+  console.log(`抢课助手已启动：${assistant.url}`);
+  process.on("SIGINT", async () => {
+    await assistant.close();
+    process.exit(0);
+  });
+}

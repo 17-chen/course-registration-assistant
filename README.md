@@ -42,6 +42,28 @@ safaridriver --enable
 
 ## 安装与启动
 
+### 使用 macOS 安装包（推荐）
+
+从 GitHub Releases 下载与芯片匹配的 `.dmg`。当前提供 Apple Silicon（M1/M2/M3/M4）版本：
+
+```text
+WKU-Course-Assistant-0.1.0-arm64.dmg
+```
+
+1. 双击打开 DMG。
+2. 把 `WKU Course Assistant` 拖入 `Applications`。
+3. 从“应用程序”启动。
+
+当前安装包没有 Apple Developer 签名。首次打开如果 macOS 阻止运行，请在 Finder 中右键应用、选择“打开”，然后在确认窗口中再次选择“打开”。不要在无法确认下载来源时绕过系统安全提示。
+
+安装版不需要另外安装 Node.js。浏览器登录数据、运行日志和截图存放在：
+
+```text
+~/Library/Application Support/wku-course-registration-assistant/
+```
+
+### 从源码运行
+
 克隆仓库：
 
 ```bash
@@ -137,6 +159,14 @@ npm run check
 ```
 
 该命令执行源码语法检查和 Node.js 自动测试。
+
+生成 Apple Silicon DMG：
+
+```bash
+npm run build:mac
+```
+
+输出位于 `dist/`，构建产物不会提交进 Git。
 
 ## 当前限制
 
