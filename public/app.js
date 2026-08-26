@@ -117,8 +117,16 @@ elements.browserChoice.addEventListener("change", () => {
   elements.browserHint.textContent = hints[elements.browserChoice.value];
 });
 elements.openPortal.addEventListener("click", async () => {
+  const originalText = elements.openPortal.textContent;
+  elements.openPortal.disabled = true;
+  elements.openPortal.textContent = "正在打开…";
+  elements.message.textContent = `正在启动 ${elements.browserChoice.options[elements.browserChoice.selectedIndex].text}，请稍候…`;
   try { render(await api("/api/open", { url: elements.portalUrl.value, browser: elements.browserChoice.value })); }
   catch (error) { elements.message.textContent = error.message; }
+  finally {
+    elements.openPortal.disabled = false;
+    elements.openPortal.textContent = originalText;
+  }
 });
 elements.scanPage.addEventListener("click", async () => {
   try {

@@ -31,9 +31,18 @@ export class BrowserSession {
     this.kind = kind;
 
     if (kind === "safari") {
+      let timedOut = false;
+      const buildDriver = new Builder().forBrowser("safari").build();
       try {
-        this.driver = await new Builder().forBrowser("safari").build();
+        this.driver = await Promise.race([
+          buildDriver,
+          new Promise((_, reject) => setTimeout(() => {
+            timedOut = true;
+            reject(new Error("SafariDriver 启动超时"));
+          }, 15_000)),
+        ]);
       } catch (error) {
+        if (timedOut) buildDriver.then((driver) => driver.quit()).catch(() => {});
         this.kind = null;
         throw new Error(`Safari 自动化启动失败。请在终端运行 safaridriver --enable，并在 Safari「开发」设置中允许远程自动化。${error.message ? ` 原因：${error.message}` : ""}`);
       }

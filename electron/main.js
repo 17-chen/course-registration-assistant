@@ -4,38 +4,56 @@ import { startAssistantServer } from "../src/server.js";
 
 let mainWindow;
 let assistant;
+let creatingWindow;
 
 async function createWindow() {
-  const appRoot = app.getAppPath();
-  const dataRoot = app.getPath("userData");
-  assistant = await startAssistantServer({ appRoot, dataRoot, port: 0 });
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.show();
+    mainWindow.focus();
+    return mainWindow;
+  }
+  if (creatingWindow) return creatingWindow;
 
-  mainWindow = new BrowserWindow({
-    width: 1320,
-    height: 920,
-    minWidth: 900,
-    minHeight: 680,
-    backgroundColor: "#f3f4f5",
-    title: "WKU 抢课助手",
-    webPreferences: {
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-    },
-  });
+  creatingWindow = (async () => {
+    const appRoot = app.getAppPath();
+    const dataRoot = app.getPath("userData");
+    assistant = await startAssistantServer({ appRoot, dataRoot, port: 0 });
 
-  mainWindow.removeMenu();
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:/i.test(url)) shell.openExternal(url);
-    return { action: "deny" };
-  });
-  await mainWindow.loadURL(assistant.url);
+    mainWindow = new BrowserWindow({
+      width: 1320,
+      height: 920,
+      minWidth: 900,
+      minHeight: 680,
+      backgroundColor: "#f3f4f5",
+      title: "WKU 抢课助手",
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+      },
+    });
+
+    mainWindow.removeMenu();
+    mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+      if (/^https?:/i.test(url)) shell.openExternal(url);
+      return { action: "deny" };
+    });
+    mainWindow.on("closed", () => { mainWindow = null; });
+    await mainWindow.loadURL(assistant.url);
+    return mainWindow;
+  })();
+
+  try {
+    return await creatingWindow;
+  } finally {
+    creatingWindow = null;
+  }
 }
 
 app.whenReady().then(createWindow);
 
 app.on("activate", () => {
-  if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  createWindow();
 });
 
 app.on("window-all-closed", () => {

@@ -1,6 +1,6 @@
 {
   "name": "wku-course-registration-assistant",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "A local, user-started course registration assistant for Ellucian Colleague Self-Service.",
   "author": "17-chen",
