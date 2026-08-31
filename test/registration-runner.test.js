@@ -53,3 +53,16 @@ test("accepts Chrome, Edge, and Safari browser choices", () => {
     /浏览器/,
   );
 });
+
+test("seat monitor clicks once per new availability transition", () => {
+  const runner = new RegistrationRunner({ rootDir: "/tmp/course-assistant-test" });
+  const full = { available: 0, capacity: 24, waitlisted: 0, full: true };
+  const open = { available: 1, capacity: 24, waitlisted: 0, full: false };
+
+  assert.equal(runner.evaluateSeatTrigger("CPS*2390*W03", full).shouldAttempt, false);
+  assert.equal(runner.evaluateSeatTrigger("CPS*2390*W03", open).shouldAttempt, true);
+  assert.equal(runner.evaluateSeatTrigger("CPS*2390*W03", open).shouldAttempt, false);
+  assert.equal(runner.evaluateSeatTrigger("CPS*2390*W03", open).reason, "already-attempted");
+  assert.equal(runner.evaluateSeatTrigger("CPS*2390*W03", full).shouldAttempt, false);
+  assert.equal(runner.evaluateSeatTrigger("CPS*2390*W03", open).shouldAttempt, true);
+});

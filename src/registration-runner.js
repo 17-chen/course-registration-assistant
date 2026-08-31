@@ -18,6 +18,7 @@ export class RegistrationRunner extends EventEmitter {
     this.running = false;
     this.stopRequested = false;
     this.dryRunNotified = new Set();
+    this.seatGates = new Map();
     this.state = this.initialState();
   }
 
@@ -33,6 +34,7 @@ export class RegistrationRunner extends EventEmitter {
       mode: null,
       dryRun: true,
       browser: "chrome",
+      refreshCount: 0,
     };
   }
 
@@ -112,6 +114,7 @@ export class RegistrationRunner extends EventEmitter {
     this.running = true;
     this.stopRequested = false;
     this.dryRunNotified.clear();
+    this.seatGates.clear();
     this.publish({
       running: true,
       phase: "starting",
@@ -119,6 +122,7 @@ export class RegistrationRunner extends EventEmitter {
       mode: options.mode,
       dryRun: options.dryRun,
       browser: options.browser,
+      refreshCount: 0,
       message: options.dryRun ? "演练模式启动中" : "真实提交模式启动中",
     });
     this.runLoop(options).catch((error) => this.finish("error", error.message, true));
@@ -150,24 +154,60 @@ export class RegistrationRunner extends EventEmitter {
       return;
     }
 
+    let refreshCount = 0;
     while (!this.stopRequested) {
+      if (refreshCount > 0) {
+        await this.waitForNextRefresh(options.intervalMs);
+        if (this.stopRequested) return;
+        this.publish({ phase: "refreshing", message: `正在刷新课程页面（第 ${refreshCount + 1} 次）…` });
+        await this.reloadForMonitoring();
+        if (this.stopRequested) return;
+      }
+      refreshCount += 1;
       for (const code of options.selected) {
         if (this.stopRequested) return;
         const snapshot = await this.inspectSection(code);
+        const gate = this.evaluateSeatTrigger(code, snapshot.availability);
         this.publish({
           phase: "monitoring",
           lastCheck: new Date().toISOString(),
+          refreshCount,
           message: snapshot.found
-            ? `${code}：${snapshot.availability.available ?? "未知"} 个余位`
+            ? snapshot.availability.available > 0 && !gate.shouldAttempt
+              ? `${code}：页面仍显示 ${snapshot.availability.available} 个余位，已触发过一次；继续刷新确认，不重复点击`
+              : `${code}：${snapshot.availability.available ?? "未知"} 个余位；继续后台刷新`
             : `${code}：当前页面没有找到该 Section`,
         });
-        if (snapshot.found && snapshot.availability.available > 0) {
+        if (snapshot.found && gate.shouldAttempt) {
           await this.attemptRegistration(options, code, `发现 ${snapshot.availability.available} 个余位`);
           if (!this.running || this.stopRequested) return;
         }
       }
-      await this.reloadForMonitoring();
-      await delay(options.intervalMs);
+    }
+  }
+
+  evaluateSeatTrigger(code, availability) {
+    const previous = this.seatGates.get(code) ?? { armed: true };
+    if (availability.available === null) {
+      this.seatGates.set(code, previous);
+      return { shouldAttempt: false, armed: previous.armed, reason: "unknown" };
+    }
+    if (availability.full || availability.available <= 0) {
+      this.seatGates.set(code, { armed: true });
+      this.dryRunNotified.delete(code);
+      return { shouldAttempt: false, armed: true, reason: "full" };
+    }
+    if (previous.armed) {
+      this.seatGates.set(code, { armed: false });
+      return { shouldAttempt: true, armed: false, reason: "new-availability" };
+    }
+    return { shouldAttempt: false, armed: false, reason: "already-attempted" };
+  }
+
+  async waitForNextRefresh(intervalMs) {
+    const deadline = Date.now() + intervalMs;
+    while (!this.stopRequested && Date.now() < deadline) {
+      await delay(Math.min(250, deadline - Date.now()));
     }
   }
 

@@ -53,7 +53,7 @@
       <div class="mode-grid">
         <label class="mode active">
           <input type="radio" name="mode" value="monitor" checked>
-          <span><b>退课空位监控</b><small>发现余位后立即进入注册流程</small></span>
+          <span><b>退课空位监控</b><small>后台持续刷新；仅在新余位出现时点击一次</small></span>
         </label>
         <label class="mode">
           <input type="radio" name="mode" value="scheduled">
@@ -114,7 +114,7 @@
       <button id="testNotify" class="ghost">测试通知</button>
     </div>
 
-    <p class="footnote">真实提交前请先完成一次演练。遇到冲突、先修课、权限或学分限制时，助手会停止并通知你。</p>
+    <p class="footnote">真实提交前请先完成一次演练。满员时只刷新、不点击；检测到新余位才提交一次。遇到冲突、先修课、权限或学分限制时，助手会停止并通知你。</p>
   </main>
   <script type="module" src="/app.js"></script>
 </body>
