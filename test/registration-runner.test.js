@@ -66,3 +66,82 @@ test("seat monitor clicks once per new availability transition", () => {
   assert.equal(runner.evaluateSeatTrigger("CPS*2390*W03", full).shouldAttempt, false);
   assert.equal(runner.evaluateSeatTrigger("CPS*2390*W03", open).shouldAttempt, true);
 });
+
+test("waits for updating and refreshing overlays before reading the final result", async () => {
+  const runner = new RegistrationRunner({ rootDir: "/tmp/course-assistant-test" });
+  const states = [
+    { active: true, updating: true, refreshing: false },
+    { active: true, updating: false, refreshing: true },
+    { active: false, updating: false, refreshing: false },
+  ];
+  let inspections = 0;
+  runner.browser = {
+    label: "Google Chrome",
+    registrationProcessingState: async () => states.shift() ?? { active: false },
+    alertTexts: async () => [],
+    wait: async () => {},
+  };
+  runner.inspectSection = async () => {
+    inspections += 1;
+    return { text: "Registered, but not started" };
+  };
+
+  const originalNow = Date.now;
+  let now = 10_000;
+  Date.now = () => (now += 600);
+  try {
+    const outcome = await runner.waitForOutcome("CPS*2390*W03", { clickedAt: 10_000 });
+    assert.equal(outcome.kind, "success");
+    assert.equal(inspections, 1);
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
+test("uses at most one fallback click when processing does not start", async () => {
+  const runner = new RegistrationRunner({ rootDir: "/tmp/course-assistant-test" });
+  let fallbackClicks = 0;
+  runner.browser = {
+    label: "Google Chrome",
+    registrationProcessingState: async () => ({ active: false }),
+    alertTexts: async () => [],
+    wait: async () => {},
+  };
+  runner.inspectSection = async () => ({ text: "Planned This section is full" });
+  runner.clickRegisterNow = async () => {
+    fallbackClicks += 1;
+    return true;
+  };
+
+  const originalNow = Date.now;
+  let now = 20_000;
+  Date.now = () => (now += 1_000);
+  try {
+    const outcome = await runner.waitForOutcome("CPS*2390*W03", { clickedAt: 20_000 });
+    assert.equal(outcome.kind, "unknown");
+    assert.equal(fallbackClicks, 1);
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
+test("scheduled mode scans planned courses before waiting for the opening time", async () => {
+  const runner = new RegistrationRunner({ rootDir: "/tmp/course-assistant-test" });
+  const order = [];
+  runner.refreshLoginState = async () => true;
+  runner.detectPlannedSections = async () => {
+    order.push("scan");
+    return ["CPS*2390*W03"];
+  };
+  runner.attemptRegistration = async () => {
+    order.push("click");
+    runner.stopRequested = true;
+  };
+
+  await runner.runLoop({
+    mode: "scheduled",
+    startAt: "2000-01-01T00:00:00",
+    dryRun: false,
+  });
+  assert.deepEqual(order, ["scan", "click"]);
+});

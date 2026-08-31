@@ -164,6 +164,22 @@ export class BrowserSession {
     });
   }
 
+  async registrationProcessingState() {
+    const script = `
+      const text = document.body ? document.body.innerText : '';
+      const updating = /Updating\s+schedule/i.test(text);
+      const refreshing = /Processing\s+complete[.]?\s+Refreshing/i.test(text);
+      return { active: updating || refreshing, updating, refreshing };
+    `;
+    if (this.driver) return this.driver.executeScript(script);
+    return this.page.evaluate(() => {
+      const text = document.body ? document.body.innerText : "";
+      const updating = /Updating\s+schedule/i.test(text);
+      const refreshing = /Processing\s+complete[.]?\s+Refreshing/i.test(text);
+      return { active: updating || refreshing, updating, refreshing };
+    });
+  }
+
   async confirmDialog() {
     const script = `
       const dialog = [...document.querySelectorAll('[role="dialog"], .modal')].find((el) => el.offsetParent !== null);
