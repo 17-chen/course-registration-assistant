@@ -8,6 +8,10 @@ import { BrowserSession, LABELS } from "./browser-session.js";
 const DEFAULT_URL = "https://kean-ss.colleague.elluciancloud.com/Student/Planning/DegreePlans";
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const termOrder = (text) => {
+  const match = String(text).match(/^(Winter|Spring|Summer|Fall)\s+(\d{4})/i);
+  return match ? Number(match[2]) * 4 + ["winter", "spring", "summer", "fall"].indexOf(match[1].toLowerCase()) : null;
+};
 
 export class RegistrationRunner extends EventEmitter {
   constructor({ rootDir }) {
@@ -39,6 +43,7 @@ export class RegistrationRunner extends EventEmitter {
       submittedAt: null,
       processingSeenAt: null,
       results: [],
+      targetTerm: null,
     };
   }
 
@@ -117,6 +122,7 @@ export class RegistrationRunner extends EventEmitter {
     if (options.mode === "scheduled") {
       const startAt = new Date(`${options.startAt}+08:00`);
       if (Number.isNaN(startAt.getTime())) throw new Error("请输入有效的北京时间开放时间");
+      if (options.targetTerm && !/^(Spring|Summer|Fall|Winter)\s+\d{4}(?:\s+[\w .-]+)?$/i.test(options.targetTerm.trim())) throw new Error("请输入完整目标学期，例如 Spring 2027 Wenzhou");
     }
     return {
       url: options.url || DEFAULT_URL,
@@ -126,6 +132,7 @@ export class RegistrationRunner extends EventEmitter {
       intervalMs: Math.max(1000, Math.min(60_000, Number(options.intervalSeconds || 5) * 1000)),
       dryRun: options.dryRun !== false,
       browser: options.browser || "chrome",
+      targetTerm: String(options.targetTerm || "").replace(/\s+/g, " ").trim(),
     };
   }
 
@@ -148,9 +155,10 @@ export class RegistrationRunner extends EventEmitter {
       submittedAt: null,
       processingSeenAt: null,
       results: [],
+      targetTerm: options.targetTerm || null,
       message: options.dryRun ? "演练模式启动中" : "真实提交模式启动中",
     });
-    this.runLoop(options).catch((error) => this.finish("error", error.message, true));
+    this.runLoop(options).catch((error) => { if (!this.stopRequested) this.finish("error", error.message, true); });
     return this.state;
   }
 
@@ -168,12 +176,16 @@ export class RegistrationRunner extends EventEmitter {
 
     if (options.mode === "scheduled") {
       const targetTime = new Date(`${options.startAt}+08:00`).getTime();
+      const initialTerm = await this.waitForScheduleTerm();
+      const targetTerm = options.targetTerm || initialTerm.term;
+      await this.restoreScheduleTerm(targetTerm);
+      this.publish({ targetTerm });
       const planned = await this.detectPlannedSections();
       this.publish({
         phase: "waiting",
         message: planned.length
-          ? `已预检 ${planned.length} 门 Planned 课程，等待北京时间开放`
-          : "未识别到 Planned 课程；仍会在设定时间点击 Register Now",
+          ? `目标 ${targetTerm}，已预检 ${planned.length} 门 Planned 课程，等待北京时间开放`
+          : `目标 ${targetTerm}，未识别到 Planned 课程；等待开放后刷新并核对学期`,
       });
       while (!this.stopRequested && Date.now() < targetTime) {
         const remaining = targetTime - Date.now();
@@ -181,7 +193,7 @@ export class RegistrationRunner extends EventEmitter {
         await delay(Math.min(1000, remaining));
       }
       if (this.stopRequested) return;
-      await this.runScheduledRegistration(options, planned);
+      await this.runScheduledRegistration({ ...options, targetTerm }, planned);
       return;
     }
 
@@ -252,6 +264,33 @@ export class RegistrationRunner extends EventEmitter {
     return { ...result, availability: parseAvailability(result.text) };
   }
 
+  async waitForScheduleTerm(previousTerm = null) {
+    const deadline = Date.now() + 8000;
+    while (!this.stopRequested && Date.now() < deadline) {
+      const state = await this.browser.readScheduleTerm();
+      if (state.term && state.term !== previousTerm && !state.busy) return state;
+      await this.browser.wait(50);
+    }
+    throw new Error("未能确认 Schedule 学期或学期切换未完成，已停止，未提交课程");
+  }
+
+  async restoreScheduleTerm(targetTerm) {
+    if (!targetTerm || termOrder(targetTerm) === null) throw new Error("无法确认目标学期，已停止，未提交课程");
+    let current = await this.waitForScheduleTerm();
+    for (let step = 0; step < 8 && !this.stopRequested; step++) {
+      if (current.term.toLowerCase() === targetTerm.toLowerCase()) return;
+      const currentOrder = termOrder(current.term);
+      const targetOrder = termOrder(targetTerm);
+      if (currentOrder === null || currentOrder === targetOrder) break;
+      this.publish({ phase: "switching-term", message: `当前 ${current.term}，正在恢复目标 ${targetTerm}…` });
+      const direction = currentOrder < targetOrder ? "next" : "previous";
+      const result = await this.browser.navigateScheduleTerm(direction, current.term);
+      if (!result.clicked) break;
+      current = await this.waitForScheduleTerm(current.term);
+    }
+    throw new Error(`无法切换并确认目标学期 ${targetTerm}，已停止，未点击 Register Now`);
+  }
+
   async runScheduledRegistration(options, planned) {
     this.publish({ phase: "refreshing", message: "已到开放时间，正在刷新学校页面…" });
     await this.browser.reload();
@@ -260,9 +299,11 @@ export class RegistrationRunner extends EventEmitter {
       this.finish("login", "刷新后登录已失效，请重新登录", true);
       return;
     }
+    await this.restoreScheduleTerm(options.targetTerm);
+    if (this.stopRequested) return;
     if (options.dryRun) {
       await this.capture("dry-run-scheduled");
-      this.finish("dry-run", "定时演练完成：已到点刷新，没有点击 Register Now", true);
+      this.finish("dry-run", `定时演练完成：已刷新并恢复 ${options.targetTerm}，没有点击 Register Now`, true);
       return;
     }
 
@@ -272,7 +313,7 @@ export class RegistrationRunner extends EventEmitter {
     let clickedAt = null;
     while (!this.stopRequested && Date.now() < deadline) {
       const attemptAt = Date.now();
-      if (await this.clickRegisterNow()) {
+      if (await this.clickRegisterNow(options.targetTerm)) {
         clickedAt = attemptAt;
         break;
       }
@@ -370,8 +411,8 @@ export class RegistrationRunner extends EventEmitter {
     this.finish("error", outcome.message || `${code} 注册未成功`, true);
   }
 
-  async clickRegisterNow() {
-    return this.browser.clickRegisterNow();
+  async clickRegisterNow(expectedTerm = "") {
+    return this.browser.clickRegisterNow(expectedTerm);
   }
 
   async detectPlannedSections() {

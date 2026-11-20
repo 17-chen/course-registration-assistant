@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { chromium } from "playwright-core";
 import { Builder } from "selenium-webdriver";
+import { scheduleControl } from "./schedule-controls.js";
 
 const EXECUTABLES = {
   chrome: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -161,22 +162,22 @@ export class BrowserSession {
     }, target);
   }
 
-  async clickRegisterNow() {
-    const script = `
-      const candidates = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"]')];
-      const target = candidates.find((el) => (el.innerText || el.value || '').trim().toLowerCase() === 'register now' && !el.disabled && el.getAttribute('aria-disabled') !== 'true' && !el.classList.contains('disabled') && el.getClientRects().length > 0);
-      if (!target) return false;
-      target.click();
-      return true;
-    `;
-    if (this.driver) return this.driver.executeScript(script);
-    return this.page.evaluate(() => {
-      const candidates = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"]')];
-      const target = candidates.find((el) => (el.innerText || el.value || "").trim().toLowerCase() === "register now" && !el.disabled && el.getAttribute("aria-disabled") !== "true" && !el.classList.contains("disabled") && el.getClientRects().length > 0);
-      if (!target) return false;
-      target.click();
-      return true;
-    });
+  async scheduleOperation(input) {
+    if (this.driver) return this.driver.executeScript(`return (${scheduleControl.toString()})(arguments[0]);`, input);
+    return this.page.evaluate(scheduleControl, input);
+  }
+
+  async readScheduleTerm() {
+    return this.scheduleOperation({ action: "read" });
+  }
+
+  async navigateScheduleTerm(direction, expectedTerm) {
+    return this.scheduleOperation({ action: "navigate", direction, expectedTerm });
+  }
+
+  async clickRegisterNow(expectedTerm = "") {
+    const result = await this.scheduleOperation({ action: "register", expectedTerm });
+    return result.clicked;
   }
 
   async registrationProcessingState() {

@@ -3,7 +3,7 @@ const elements = {
   portalUrl: $("#portalUrl"), browserChoice: $("#browserChoice"), browserHint: $("#browserHint"), openPortal: $("#openPortal"), scanPage: $("#scanPage"),
   loginState: $("#loginState"), sections: $("#sections"), sectionCount: $("#sectionCount"),
   detectedSections: $("#detectedSections"), scheduleFields: $("#scheduleFields"), sectionCard: $("#sectionCard"),
-  startDate: $("#startDate"), interval: $("#interval"), intervalField: $("#intervalField"), dryRun: $("#dryRun"),
+  startDate: $("#startDate"), targetTerm: $("#targetTerm"), interval: $("#interval"), intervalField: $("#intervalField"), dryRun: $("#dryRun"),
   statusPill: $("#statusPill"), message: $("#message"), lastCheck: $("#lastCheck"),
   progressBar: $("#progressBar"), start: $("#start"), stop: $("#stop"), testNotify: $("#testNotify"),
 };
@@ -74,6 +74,8 @@ function render(state) {
   elements.message.textContent = state.message || "等待操作";
   elements.loginState.textContent = state.loggedIn ? "Chrome 登录状态：已进入学校系统" : "尚未确认登录状态";
   elements.start.disabled = Boolean(state.running);
+  elements.targetTerm.disabled = Boolean(state.running);
+  if (state.running && state.targetTerm) elements.targetTerm.value = state.targetTerm;
   elements.stop.disabled = !state.running;
   elements.progressBar.classList.toggle("running", Boolean(state.running));
   const status = state.running ? "运行中" : state.phase === "success" ? "成功" : state.phase === "error" ? "已停止" : "未运行";
@@ -144,6 +146,7 @@ elements.start.addEventListener("click", async () => {
     const result = await api("/api/start", {
       url: elements.portalUrl.value,
       sections: mode === "monitor" ? sectionValues() : [], mode, startAt,
+      targetTerm: mode === "scheduled" ? elements.targetTerm.value.trim() : "",
       intervalSeconds: Number(elements.interval.value), dryRun: elements.dryRun.checked, browser: elements.browserChoice.value,
     });
     render(result);

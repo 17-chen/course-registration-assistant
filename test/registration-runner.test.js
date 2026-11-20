@@ -157,6 +157,8 @@ test("scheduled mode scans planned courses before waiting for the opening time",
   const runner = new RegistrationRunner({ rootDir: "/tmp/course-assistant-test" });
   const order = [];
   runner.refreshLoginState = async () => true;
+  runner.waitForScheduleTerm = async () => ({ term: "Spring 2027 Wenzhou" });
+  runner.restoreScheduleTerm = async () => {};
   runner.detectPlannedSections = async () => {
     order.push("scan");
     return ["CPS*2390*W03"];
@@ -181,12 +183,13 @@ test("scheduled submission refreshes then waits for an enabled button and clicks
   let attempts = 0;
   runner.browser = { reload: async () => order.push("reload"), wait: async () => {} };
   runner.refreshLoginState = async () => true;
+  runner.restoreScheduleTerm = async (term) => { assert.equal(term, "Spring 2027 Wenzhou"); order.push("restore-term"); };
   runner.clickRegisterNow = async () => { order.push("check"); return ++attempts === 3; };
   runner.waitForScheduledResults = async () => [{ code: "CPS*2390*W03", kind: "success" }];
   runner.capture = async () => {};
   runner.finish = (phase) => { runner.resultPhase = phase; };
-  await runner.runScheduledRegistration({ dryRun: false }, ["CPS*2390*W03"]);
-  assert.deepEqual(order, ["reload", "check", "check", "check"]);
+  await runner.runScheduledRegistration({ dryRun: false, targetTerm: "Spring 2027 Wenzhou" }, ["CPS*2390*W03"]);
+  assert.deepEqual(order, ["reload", "restore-term", "check", "check", "check"]);
   assert.equal(runner.resultPhase, "success");
 });
 
@@ -195,10 +198,11 @@ test("scheduled dry run refreshes without clicking", async () => {
   let refreshed = false;
   runner.browser = { reload: async () => { refreshed = true; } };
   runner.refreshLoginState = async () => true;
+  runner.restoreScheduleTerm = async (term) => assert.equal(term, "Spring 2027 Wenzhou");
   runner.capture = async () => {};
   runner.finish = () => {};
   runner.clickRegisterNow = async () => assert.fail("dry run must not submit");
-  await runner.runScheduledRegistration({ dryRun: true }, []);
+  await runner.runScheduledRegistration({ dryRun: true, targetTerm: "Spring 2027 Wenzhou" }, []);
   assert.equal(refreshed, true);
 });
 

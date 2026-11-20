@@ -51,8 +51,8 @@ for (const engine of ["chromium", "safari"]) {
     let buttons = [button("Remove Planned Courses"), button("Register Now", { disabled: true })];
     const context = { document: { querySelectorAll: () => buttons } };
     const browser = new BrowserSession({ rootDir: "/tmp/course-assistant-test" });
-    if (engine === "safari") browser.driver = { executeScript: async (script) => vm.runInNewContext(`(function () {${script}})()`, context) };
-    else browser.page = { evaluate: async (fn) => vm.runInNewContext(`(${fn.toString()})()`, context) };
+    if (engine === "safari") browser.driver = { executeScript: async (script, input) => vm.runInNewContext(`(function () {${script}})(input)`, { ...context, input }) };
+    else browser.page = { evaluate: async (fn, input) => vm.runInNewContext(`(${fn.toString()})(input)`, { ...context, input }) };
     assert.equal(await browser.clickRegisterNow(), false);
     buttons = [button("Remove Planned Courses"), button("Register"), button("Register Now", { hidden: true }), button("Register Now", { ariaDisabled: true }), button("Register Now", { disabledClass: true }), button("Register Now")];
     assert.equal(await browser.clickRegisterNow(), true);

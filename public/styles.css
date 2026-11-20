@@ -60,7 +60,7 @@ button:disabled { opacity: .45; cursor: not-allowed; }
 .mode input { width: 18px; height: 18px; margin: 1px 0 0; accent-color: var(--blue); }
 .mode b, .mode small { display: block; }
 .mode small, .switch-field small { margin-top: 5px; color: var(--muted); line-height: 1.4; }
-.schedule-picker { display: grid; grid-template-columns: 260px 1fr; gap: 30px; align-items: start; margin-top: 22px; padding: 22px; background: #f6f7f7; border-left: 5px solid var(--yellow); }
+.schedule-picker { display: grid; grid-template-columns: minmax(220px, 1fr) 240px minmax(250px, 1fr); gap: 24px; align-items: start; margin-top: 22px; padding: 22px; background: #f6f7f7; border-left: 5px solid var(--yellow); }
 .date-field label, .wheel-field > label, .field label { display: block; margin-bottom: 9px; color: #59636a; font-size: 13px; font-weight: 700; }
 .time-wheel { position: relative; width: 360px; display: grid; grid-template-columns: 1fr 18px 1fr 18px 1fr; align-items: center; }
 .time-wheel > b { position: relative; z-index: 2; text-align: center; font-size: 22px; }
