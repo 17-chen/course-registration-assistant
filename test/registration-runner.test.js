@@ -98,7 +98,7 @@ test("waits for updating and refreshing overlays before reading the final result
   }
 });
 
-test("uses at most one fallback click when processing does not start", async () => {
+test("never repeats a submit when processing does not start", async () => {
   const runner = new RegistrationRunner({ rootDir: "/tmp/course-assistant-test" });
   let fallbackClicks = 0;
   runner.browser = {
@@ -119,7 +119,7 @@ test("uses at most one fallback click when processing does not start", async () 
   try {
     const outcome = await runner.waitForOutcome("CPS*2390*W03", { clickedAt: 20_000 });
     assert.equal(outcome.kind, "unknown");
-    assert.equal(fallbackClicks, 1);
+    assert.equal(fallbackClicks, 0);
   } finally {
     Date.now = originalNow;
   }
@@ -133,8 +133,9 @@ test("scheduled mode scans planned courses before waiting for the opening time",
     order.push("scan");
     return ["CPS*2390*W03"];
   };
-  runner.attemptRegistration = async () => {
-    order.push("click");
+  runner.runScheduledRegistration = async (_options, planned) => {
+    assert.deepEqual(planned, ["CPS*2390*W03"]);
+    order.push("scheduled");
     runner.stopRequested = true;
   };
 
@@ -143,5 +144,52 @@ test("scheduled mode scans planned courses before waiting for the opening time",
     startAt: "2000-01-01T00:00:00",
     dryRun: false,
   });
-  assert.deepEqual(order, ["scan", "click"]);
+  assert.deepEqual(order, ["scan", "scheduled"]);
+});
+
+test("scheduled submission refreshes then waits for an enabled button and clicks only once", async () => {
+  const runner = new RegistrationRunner({ rootDir: "/tmp/course-assistant-test" });
+  const order = [];
+  let attempts = 0;
+  runner.browser = { reload: async () => order.push("reload"), wait: async () => {} };
+  runner.refreshLoginState = async () => true;
+  runner.clickRegisterNow = async () => { order.push("check"); return ++attempts === 3; };
+  runner.waitForScheduledResults = async () => [{ code: "CPS*2390*W03", kind: "success" }];
+  runner.capture = async () => {};
+  runner.finish = (phase) => { runner.resultPhase = phase; };
+  await runner.runScheduledRegistration({ dryRun: false }, ["CPS*2390*W03"]);
+  assert.deepEqual(order, ["reload", "check", "check", "check"]);
+  assert.equal(runner.resultPhase, "success");
+});
+
+test("scheduled dry run refreshes without clicking", async () => {
+  const runner = new RegistrationRunner({ rootDir: "/tmp/course-assistant-test" });
+  let refreshed = false;
+  runner.browser = { reload: async () => { refreshed = true; } };
+  runner.refreshLoginState = async () => true;
+  runner.capture = async () => {};
+  runner.finish = () => {};
+  runner.clickRegisterNow = async () => assert.fail("dry run must not submit");
+  await runner.runScheduledRegistration({ dryRun: true }, []);
+  assert.equal(refreshed, true);
+});
+
+test("scheduled results retain success, full, conflict and unknown separately", async () => {
+  const runner = new RegistrationRunner({ rootDir: "/tmp/course-assistant-test" });
+  let busy = true;
+  runner.browser = {
+    registrationProcessingState: async () => { const active = busy; busy = false; return { active }; },
+    wait: async () => {},
+  };
+  const texts = { A: "Registered, but not started", B: "This section is full", C: "Conflicting section", D: "Planned" };
+  runner.inspectSection = async (code) => ({ text: texts[code] });
+  const originalNow = Date.now;
+  let now = 10_000;
+  Date.now = () => (now += 500);
+  try {
+    const results = await runner.waitForScheduledResults(Object.keys(texts), 10_000);
+    assert.deepEqual(results.map((result) => result.kind), ["success", "full", "blocking", "unknown"]);
+  } finally {
+    Date.now = originalNow;
+  }
 });

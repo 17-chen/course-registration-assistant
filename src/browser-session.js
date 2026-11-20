@@ -114,12 +114,12 @@ export class BrowserSession {
       const target = arguments[0];
       const normalize = (value) => String(value || "").toUpperCase().replaceAll("-", "*");
       const elements = [...document.querySelectorAll("a, tr, li, article, section, div")]
-        .filter((el) => normalize(el.textContent).includes(target));
+        .filter((el) => normalize(el.textContent).match(/\\b[A-Z]{2,}\\*[A-Z0-9]+\\*[A-Z0-9]+\\b/)?.[0] === target);
       if (!elements.length) return { found: false, text: "" };
       const scored = elements.map((el) => {
         const text = (el.innerText || el.textContent || "").replace(/\\s+/g, " ").trim();
         let score = 0;
-        if (/Seats? Available|This section is full|Registered/i.test(text)) score += 20;
+        if (/Seats? Available|This section is full|Registered|\\bPlanned\\b/i.test(text)) score += 20;
         if (el.querySelector("button, a")) score += 5;
         if (text.length > 40 && text.length < 900) score += 10;
         score -= Math.min(text.length / 500, 5);
@@ -131,12 +131,12 @@ export class BrowserSession {
     return this.page.evaluate((targetValue) => {
       const normalize = (value) => String(value || "").toUpperCase().replaceAll("-", "*");
       const elements = [...document.querySelectorAll("a, tr, li, article, section, div")]
-        .filter((el) => normalize(el.textContent).includes(targetValue));
+        .filter((el) => normalize(el.textContent).match(/\b[A-Z]{2,}\*[A-Z0-9]+\*[A-Z0-9]+\b/)?.[0] === targetValue);
       if (!elements.length) return { found: false, text: "" };
       const scored = elements.map((el) => {
         const text = (el.innerText || el.textContent || "").replace(/\s+/g, " ").trim();
         let score = 0;
-        if (/Seats? Available|This section is full|Registered/i.test(text)) score += 20;
+        if (/Seats? Available|This section is full|Registered|\bPlanned\b/i.test(text)) score += 20;
         if (el.querySelector("button, a")) score += 5;
         if (text.length > 40 && text.length < 900) score += 10;
         score -= Math.min(text.length / 500, 5);
@@ -149,7 +149,7 @@ export class BrowserSession {
   async clickRegisterNow() {
     const script = `
       const candidates = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"]')];
-      const target = candidates.find((el) => (el.innerText || el.value || '').trim().toLowerCase() === 'register now' && !el.disabled);
+      const target = candidates.find((el) => (el.innerText || el.value || '').trim().toLowerCase() === 'register now' && !el.disabled && el.getAttribute('aria-disabled') !== 'true' && !el.classList.contains('disabled') && el.getClientRects().length > 0);
       if (!target) return false;
       target.click();
       return true;
@@ -157,7 +157,7 @@ export class BrowserSession {
     if (this.driver) return this.driver.executeScript(script);
     return this.page.evaluate(() => {
       const candidates = [...document.querySelectorAll('button, a, input[type="button"], input[type="submit"]')];
-      const target = candidates.find((el) => (el.innerText || el.value || "").trim().toLowerCase() === "register now" && !el.disabled);
+      const target = candidates.find((el) => (el.innerText || el.value || "").trim().toLowerCase() === "register now" && !el.disabled && el.getAttribute("aria-disabled") !== "true" && !el.classList.contains("disabled") && el.getClientRects().length > 0);
       if (!target) return false;
       target.click();
       return true;

@@ -37,6 +37,7 @@ export class RegistrationRunner extends EventEmitter {
       refreshCount: 0,
       submittedAt: null,
       processingSeenAt: null,
+      results: [],
     };
   }
 
@@ -127,6 +128,7 @@ export class RegistrationRunner extends EventEmitter {
       refreshCount: 0,
       submittedAt: null,
       processingSeenAt: null,
+      results: [],
       message: options.dryRun ? "演练模式启动中" : "真实提交模式启动中",
     });
     this.runLoop(options).catch((error) => this.finish("error", error.message, true));
@@ -160,7 +162,7 @@ export class RegistrationRunner extends EventEmitter {
         await delay(Math.min(1000, remaining));
       }
       if (this.stopRequested) return;
-      await this.attemptRegistration(options, planned[0] || "计划课程", "到达开放时间");
+      await this.runScheduledRegistration(options, planned);
       return;
     }
 
@@ -231,6 +233,79 @@ export class RegistrationRunner extends EventEmitter {
     return { ...result, availability: parseAvailability(result.text) };
   }
 
+  async runScheduledRegistration(options, planned) {
+    this.publish({ phase: "refreshing", message: "已到开放时间，正在刷新学校页面…" });
+    await this.browser.reload();
+    if (this.stopRequested) return;
+    if (!await this.refreshLoginState()) {
+      this.finish("login", "刷新后登录已失效，请重新登录", true);
+      return;
+    }
+    if (options.dryRun) {
+      await this.capture("dry-run-scheduled");
+      this.finish("dry-run", "定时演练完成：已到点刷新，没有点击 Register Now", true);
+      return;
+    }
+
+    // Each check resolves the current DOM again after reload. Only a successful
+    // enabled-button click ends this loop; no further submit is ever attempted.
+    const deadline = Date.now() + 30_000;
+    let clickedAt = null;
+    while (!this.stopRequested && Date.now() < deadline) {
+      const attemptAt = Date.now();
+      if (await this.clickRegisterNow()) {
+        clickedAt = attemptAt;
+        break;
+      }
+      await this.browser.wait(50);
+    }
+    if (this.stopRequested) return;
+    if (clickedAt === null) {
+      this.finish("error", "刷新后30秒内 Register Now 未可用，已停止，请检查学校页面", true);
+      return;
+    }
+    this.publish({ phase: "submitting", submittedAt: new Date(clickedAt).toISOString(), message: "已点击 Register Now 一次，等待逐门注册结果…" });
+    const results = await this.waitForScheduledResults(planned, clickedAt);
+    if (this.stopRequested) return;
+    this.publish({ results });
+    await this.capture("scheduled-results");
+    const succeeded = results.filter((result) => result.kind === "success").length;
+    const details = results.map((result) => `${result.code}：${result.kind === "success" ? "成功" : result.kind === "full" ? "满员" : result.kind === "blocking" ? "受限/冲突" : "待人工确认"}`).join("；");
+    this.finish(results.length && succeeded === results.length ? "success" : "error",
+      `提交结束，成功 ${succeeded}/${results.length} 门。${details || "未识别到课程，请在学校页面核对结果"}。未启动候补监控。`, true);
+  }
+
+  async waitForScheduledResults(planned, clickedAt) {
+    const deadline = clickedAt + 60_000;
+    let processingSeen = false;
+    let stableSince = Date.now();
+    let previous = "";
+    let results = planned.map((code) => ({ code, kind: "unknown", message: "尚未确认" }));
+    while (!this.stopRequested && Date.now() < deadline) {
+      const processing = await this.browser.registrationProcessingState();
+      if (processing.active) {
+        processingSeen = true;
+        stableSince = Date.now();
+        await this.browser.wait(100);
+        continue;
+      }
+      results = await Promise.all(planned.map(async (code) => {
+        const snapshot = await this.inspectSection(code);
+        return { code, ...classifyRegistrationMessage(snapshot.text) };
+      }));
+      const signature = JSON.stringify(results);
+      if (signature !== previous) {
+        previous = signature;
+        stableSince = Date.now();
+      }
+      this.publish({ results, message: `正在核对结果：已确认 ${results.filter((result) => result.kind !== "unknown").length}/${planned.length} 门` });
+      // Unknown cards remain explicitly unconfirmed, including partial results.
+      if ((processingSeen || (results.length && results.every((result) => result.kind !== "unknown"))) && Date.now() - stableSince >= 2000) return results;
+      await this.browser.wait(200);
+    }
+    return results;
+  }
+
   async attemptRegistration(options, code, reason) {
     this.publish({ phase: "attempting", message: `${reason}，准备注册 ${code}` });
     notify("抢课助手", `${code} 已触发注册流程`);
@@ -293,13 +368,11 @@ export class RegistrationRunner extends EventEmitter {
 
   async waitForOutcome(code, { baselineNotices = [], clickedAt = Date.now() } = {}) {
     const deadline = clickedAt + 60_000;
-    const retryAt = clickedAt + 2_000;
     const baseline = new Set(baselineNotices.map((text) => String(text).replace(/\s+/g, " ").trim()));
     let processingSeen = false;
     let inactiveSince = null;
-    let retried = false;
 
-    while (Date.now() < deadline) {
+    while (!this.stopRequested && Date.now() < deadline) {
       const processing = await this.browser.registrationProcessingState().catch(() => ({ active: false }));
       if (processing.active) {
         processingSeen = true;
@@ -334,16 +407,6 @@ export class RegistrationRunner extends EventEmitter {
       if (processingSeen && sectionResult.kind === "blocking") return sectionResult;
       if (processingSeen && sectionResult.kind === "full") return sectionResult;
 
-      if (!processingSeen && !retried && Date.now() >= retryAt) {
-        retried = true;
-        const clickedAgain = await this.clickRegisterNow();
-        this.publish({
-          phase: "submitting",
-          message: clickedAgain
-            ? "首次点击后未检测到处理状态，已执行唯一一次兜底点击…"
-            : "首次点击后未检测到处理状态，Register Now 当前不可再次点击；继续等待…",
-        });
-      }
       await this.browser.wait(100);
     }
     return {

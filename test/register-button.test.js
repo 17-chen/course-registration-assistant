@@ -1,0 +1,40 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import vm from "node:vm";
+import { BrowserSession } from "../src/browser-session.js";
+
+for (const engine of ["chromium", "safari"]) {
+  test(`${engine}: reads the target card rather than a different course mentioning it`, async () => {
+    const card = (text) => ({ textContent: text, innerText: text, querySelector: () => ({}) });
+    const context = { document: { querySelectorAll: () => [
+      card("HIST*1062*W03 Registered, but not started. Conflicting section with PSY*1000*W06"),
+      card("PSY*1000*W06 General Psychology Planned Conflicting section with HIST*1062*W03"),
+    ] } };
+    const browser = new BrowserSession({ rootDir: "/tmp/course-assistant-test" });
+    if (engine === "safari") browser.driver = { executeScript: async (script, target) => vm.runInNewContext(`(function () {${script}})(target)`, { ...context, target }) };
+    else browser.page = { evaluate: async (fn, target) => vm.runInNewContext(`(${fn.toString()})(target)`, { ...context, target }) };
+    const result = await browser.inspectSection("PSY*1000*W06");
+    assert.match(result.text, /^PSY/);
+    assert.doesNotMatch(result.text, /Registered/);
+  });
+  test(`${engine}: ignores Remove, hidden and disabled buttons; reacquires after refresh`, async () => {
+    const clicked = [];
+    const button = (text, options = {}) => ({
+      innerText: text,
+      disabled: Boolean(options.disabled),
+      getAttribute: () => options.ariaDisabled ? "true" : null,
+      classList: { contains: () => Boolean(options.disabledClass) },
+      getClientRects: () => options.hidden ? [] : [{}],
+      click: () => clicked.push(text),
+    });
+    let buttons = [button("Remove Planned Courses"), button("Register Now", { disabled: true })];
+    const context = { document: { querySelectorAll: () => buttons } };
+    const browser = new BrowserSession({ rootDir: "/tmp/course-assistant-test" });
+    if (engine === "safari") browser.driver = { executeScript: async (script) => vm.runInNewContext(`(function () {${script}})()`, context) };
+    else browser.page = { evaluate: async (fn) => vm.runInNewContext(`(${fn.toString()})()`, context) };
+    assert.equal(await browser.clickRegisterNow(), false);
+    buttons = [button("Remove Planned Courses"), button("Register"), button("Register Now", { hidden: true }), button("Register Now", { ariaDisabled: true }), button("Register Now", { disabledClass: true }), button("Register Now")];
+    assert.equal(await browser.clickRegisterNow(), true);
+    assert.deepEqual(clicked, ["Register Now"]);
+  });
+}
