@@ -24,6 +24,14 @@ export class BrowserSession {
   get active() { return Boolean(this.context || this.driver); }
   get label() { return LABELS[this.kind] || "浏览器"; }
 
+  async ensurePage() {
+    if (this.driver) return;
+    if (!this.context) throw new Error("浏览器尚未连接，请先打开学校网站");
+    if (!this.page || this.page.isClosed()) {
+      this.page = this.context.pages().find((page) => !page.isClosed()) ?? await this.context.newPage();
+    }
+  }
+
   async launch(kind = "chrome") {
     if (!LABELS[kind]) throw new Error("不支持的浏览器");
     if (this.active && this.kind === kind) return;
@@ -92,6 +100,7 @@ export class BrowserSession {
 
   async goto(url) {
     if (this.driver) return this.driver.get(url);
+    await this.ensurePage();
     return this.page.goto(url, { waitUntil: "domcontentloaded", timeout: 45_000 });
   }
 

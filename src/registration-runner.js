@@ -54,7 +54,10 @@ export class RegistrationRunner extends EventEmitter {
 
   async ensureBrowser(kind = "chrome") {
     if (this.browserLaunch) await this.browserLaunch;
-    if (this.browser.active && this.browser.kind === kind) return;
+    if (this.browser.active && this.browser.kind === kind) {
+      await this.browser.ensurePage?.();
+      return;
+    }
     fs.mkdirSync(this.logDir, { recursive: true });
     this.publish({ phase: "launching", browser: kind, message: `正在打开 ${LABELS[kind]}…` });
     this.browserLaunch = this.browser.launch(kind);

@@ -3,6 +3,27 @@ import assert from "node:assert/strict";
 import vm from "node:vm";
 import { BrowserSession } from "../src/browser-session.js";
 
+test("opening the portal recovers a closed tab using another live tab", async () => {
+  const browser = new BrowserSession({ rootDir: "/tmp/course-assistant-test" });
+  let visited = null;
+  const live = { isClosed: () => false, goto: async (url) => { visited = url; } };
+  browser.page = { isClosed: () => true };
+  browser.context = { pages: () => [live] };
+  await browser.goto("https://example.test/");
+  assert.equal(visited, "https://example.test/");
+});
+
+test("opening the portal recreates a tab when all previous tabs are closed", async () => {
+  const browser = new BrowserSession({ rootDir: "/tmp/course-assistant-test" });
+  let created = 0;
+  const live = { isClosed: () => false, goto: async () => {} };
+  browser.page = { isClosed: () => true };
+  browser.context = { pages: () => [], newPage: async () => { created++; return live; } };
+  await browser.goto("https://example.test/");
+  assert.equal(created, 1);
+  assert.equal(browser.page, live);
+});
+
 for (const engine of ["chromium", "safari"]) {
   test(`${engine}: reads the target card rather than a different course mentioning it`, async () => {
     const card = (text) => ({ textContent: text, innerText: text, querySelector: () => ({}) });
