@@ -17,7 +17,9 @@ async function createWindow() {
   creatingWindow = (async () => {
     const appRoot = app.getAppPath();
     const dataRoot = app.getPath("userData");
-    assistant = await startAssistantServer({ appRoot, dataRoot, port: 0 });
+    // Closing a macOS window leaves the app and its browser session running.
+    // Reopening must reconnect to that server, not launch a competing profile.
+    assistant ??= await startAssistantServer({ appRoot, dataRoot, port: 0 });
 
     mainWindow = new BrowserWindow({
       width: 1320,
@@ -50,7 +52,13 @@ async function createWindow() {
   }
 }
 
-app.whenReady().then(createWindow);
+const hasInstanceLock = app.requestSingleInstanceLock();
+if (!hasInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => { app.whenReady().then(createWindow); });
+  app.whenReady().then(createWindow);
+}
 
 app.on("activate", () => {
   createWindow();

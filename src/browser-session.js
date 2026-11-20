@@ -56,12 +56,18 @@ export class BrowserSession {
     }
     const profileDir = path.join(this.rootDir, "runtime", `${kind}-profile`);
     fs.mkdirSync(profileDir, { recursive: true });
-    this.context = await chromium.launchPersistentContext(profileDir, {
-      executablePath,
-      headless: false,
-      viewport: null,
-      args: ["--start-maximized"],
-    });
+    try {
+      this.context = await chromium.launchPersistentContext(profileDir, {
+        executablePath,
+        headless: false,
+        viewport: null,
+        timeout: 20_000,
+        args: ["--start-maximized"],
+      });
+    } catch (error) {
+      this.kind = null;
+      throw new Error(`${LABELS[kind]} 自动化连接失败。请确认没有另一份抢课助手占用专用浏览器，完全退出多余的助手后重试。原因：${error.message}`);
+    }
     this.page = this.context.pages()[0] ?? await this.context.newPage();
     this.context.on("close", () => {
       this.context = null;

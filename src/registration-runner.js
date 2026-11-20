@@ -19,6 +19,7 @@ export class RegistrationRunner extends EventEmitter {
     this.stopRequested = false;
     this.dryRunNotified = new Set();
     this.seatGates = new Map();
+    this.browserLaunch = null;
     this.state = this.initialState();
   }
 
@@ -52,16 +53,31 @@ export class RegistrationRunner extends EventEmitter {
   }
 
   async ensureBrowser(kind = "chrome") {
+    if (this.browserLaunch) await this.browserLaunch;
     if (this.browser.active && this.browser.kind === kind) return;
     fs.mkdirSync(this.logDir, { recursive: true });
     this.publish({ phase: "launching", browser: kind, message: `正在打开 ${LABELS[kind]}…` });
-    await this.browser.launch(kind);
+    this.browserLaunch = this.browser.launch(kind);
+    try {
+      await this.browserLaunch;
+    } catch (error) {
+      this.publish({ phase: "error", loggedIn: false, message: `浏览器启动失败：${error.message}` });
+      throw error;
+    } finally {
+      this.browserLaunch = null;
+    }
   }
 
   async openPortal(url = DEFAULT_URL, kind = "chrome") {
     if (this.running && this.browser.kind !== kind) throw new Error("请先停止当前监控，再切换浏览器");
     await this.ensureBrowser(kind);
-    await this.browser.goto(url);
+    this.publish({ message: "浏览器已连接，正在打开学校网站…" });
+    try {
+      await this.browser.goto(url);
+    } catch (error) {
+      this.publish({ phase: "error", message: `学校页面打开失败：${error.message}。请在助手打开的浏览器里手动输入学校网址，然后点击“读取当前页面”。` });
+      throw new Error(this.state.message);
+    }
     await this.refreshLoginState();
     if (!this.state.loggedIn) {
       this.publish({ phase: "login", message: `请在 ${this.browser.label} 中完成学校登录，然后点击“读取当前页面”` });
@@ -72,7 +88,7 @@ export class RegistrationRunner extends EventEmitter {
 
   async refreshLoginState() {
     const currentUrl = await this.browser.url();
-    const loggedIn = Boolean(currentUrl) && !/\/Account\/Login|saml|login|signin/i.test(currentUrl);
+    const loggedIn = /^https:\/\/kean-ss\.colleague\.elluciancloud\.com\//i.test(currentUrl) && !/\/Account\/Login|saml|login|signin/i.test(currentUrl);
     this.publish({ loggedIn });
     return loggedIn;
   }

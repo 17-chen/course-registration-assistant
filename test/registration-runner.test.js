@@ -2,6 +2,34 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { RegistrationRunner } from "../src/registration-runner.js";
 
+test("blank browser pages are not reported as logged in", async () => {
+  const runner = new RegistrationRunner({ rootDir: "/tmp/course-assistant-test" });
+  runner.browser = { url: async () => "about:blank" };
+  assert.equal(await runner.refreshLoginState(), false);
+});
+
+test("concurrent browser requests share one browser launch", async () => {
+  const runner = new RegistrationRunner({ rootDir: "/tmp/course-assistant-test" });
+  let launches = 0;
+  runner.browser = { active: false, kind: null, launch: async (kind) => {
+    launches++;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    runner.browser.active = true;
+    runner.browser.kind = kind;
+  } };
+  await Promise.all([runner.ensureBrowser("chrome"), runner.ensureBrowser("chrome")]);
+  assert.equal(launches, 1);
+});
+
+test("browser launch errors become visible instead of staying in launching state", async () => {
+  const runner = new RegistrationRunner({ rootDir: "/tmp/course-assistant-test" });
+  runner.browser = { launch: async () => { throw new Error("profile already in use"); } };
+  await assert.rejects(runner.ensureBrowser("chrome"), /profile already in use/);
+  assert.equal(runner.state.phase, "error");
+  assert.match(runner.state.message, /profile already in use/);
+  assert.equal(runner.browserLaunch, null);
+});
+
 test("validates and normalizes monitor options", () => {
   const runner = new RegistrationRunner({ rootDir: "/tmp/course-assistant-test" });
   const options = runner.validateOptions({
