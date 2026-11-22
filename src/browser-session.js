@@ -3,6 +3,7 @@ import path from "node:path";
 import { chromium } from "playwright-core";
 import { Builder } from "selenium-webdriver";
 import { scheduleControl } from "./schedule-controls.js";
+import { monitorControl } from "./monitor-controls.js";
 
 const EXECUTABLES = {
   chrome: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -178,6 +179,38 @@ export class BrowserSession {
   async clickRegisterNow(expectedTerm = "") {
     const result = await this.scheduleOperation({ action: "register", expectedTerm });
     return result.clicked;
+  }
+
+  async monitorOperation(input) {
+    const operation = new Function("input", `return (${monitorControl.toString()})(input, (${scheduleControl.toString()}));`);
+    if (this.driver) return this.driver.executeScript(`return (${operation.toString()})(arguments[0]);`, input);
+    return this.page.evaluate(operation, input);
+  }
+
+  async inspectMonitoringSection(code, expectedTerm, shouldStop = () => false) {
+    const input = { code, expectedTerm };
+    const initial = await this.monitorOperation(input);
+    if (!initial.safe) throw new Error("监控学期不一致或仍在加载，已停止，未提交");
+    if (!initial.found || initial.registered || shouldStop()) return initial;
+    const opened = await this.monitorOperation({ ...input, action: "open-details" });
+    if (!opened.clicked) throw new Error(`${code} 无法安全打开班次详情，请关闭其他弹窗后重试`);
+    let result;
+    let closed = false;
+    try {
+      const deadline = Date.now() + 10_000;
+      while (!shouldStop() && Date.now() < deadline) {
+        result = await this.monitorOperation({ ...input, action: "details" });
+        if (!result.safe) throw new Error("读取详情时学期发生变化，已停止，未提交");
+        if (result.ready) break;
+        await this.wait(100);
+      }
+    } finally {
+      closed = (await this.monitorOperation({ ...input, action: "close-details" })).clicked;
+    }
+    if (shouldStop()) return initial;
+    if (!result?.ready || !closed) throw new Error(`${code} 详情加载超时或弹窗无法关闭，已停止，未提交`);
+    // Preserve card membership separately from the details' queue headcount.
+    return { ...initial, availabilityText: result.detailText };
   }
 
   async registrationProcessingState() {

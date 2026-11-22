@@ -3,7 +3,7 @@ export function scheduleControl({ action = "read", expectedTerm = "", direction 
   const clean = (text) => String(text || "").replace(/\s+/g, " ").trim();
   const visible = (el) => el.getClientRects().length > 0;
   const enabled = (el) => !el.disabled && el.getAttribute("aria-disabled") !== "true" && !el.classList.contains("disabled");
-  const busy = action === "register" && !expectedTerm ? false : [...document.querySelectorAll('[aria-busy="true"], [role="progressbar"]')].some(visible);
+  const busy = action === "register" && !expectedTerm ? false : [...document.querySelectorAll('[aria-busy="true"], [role="progressbar"]')].some(visible) || /Refreshing registration eligibility|Updating\s+schedule|Processing\s+complete[.]?\s+Refreshing/i.test(document.body?.innerText || "");
   let current = null;
   if (action !== "register" || expectedTerm) {
     const labels = [...document.querySelectorAll("span, div, p, label, h1, h2, h3, h4")]

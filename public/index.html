@@ -53,19 +53,19 @@
       <div class="mode-grid">
         <label class="mode active">
           <input type="radio" name="mode" value="monitor" checked>
-          <span><b>退课空位监控</b><small>后台持续刷新；仅在新余位出现时点击一次</small></span>
+          <span><b>退课空位监控</b><small>刷新后恢复学期；监控课程余位与候补位置</small></span>
         </label>
         <label class="mode">
           <input type="radio" name="mode" value="scheduled">
           <span><b>固定时间抢课</b><small>到北京时间刷新，按钮可用后提交一次并汇总结果</small></span>
         </label>
       </div>
+      <div class="field">
+        <label for="targetTerm">目标学期（与学校页面一致）</label>
+        <input id="targetTerm" value="Spring 2027 Wenzhou" placeholder="Spring 2027 Wenzhou">
+        <small>两种模式刷新后均自动恢复此学期，核对一致才监控或提交。</small>
+      </div>
       <div id="scheduleFields" class="schedule-picker hidden">
-        <div class="date-field">
-          <label for="targetTerm">目标学期（与学校页面一致）</label>
-          <input id="targetTerm" value="Spring 2027 Wenzhou" placeholder="Spring 2027 Wenzhou">
-          <small>到点刷新后自动恢复此学期，核对一致才提交。</small>
-        </div>
         <div class="date-field">
           <label for="startDate">开放日期（北京时间）</label>
           <input id="startDate" type="date">
@@ -87,22 +87,25 @@
       <div class="section-heading">
         <div>
           <h2>3. 选择 Section</h2>
-          <p>每行一个 Section Name，按从上到下的优先级尝试，任意一个成功后停止。</p>
+          <p>每行一个 Section Name，按从上到下的优先级尝试，任意一个注册或加入候补成功后停止。</p>
         </div>
         <span id="sectionCount" class="count">0 个</span>
       </div>
       <textarea id="sections" rows="5" placeholder="例如：&#10;CPS*2390*W03&#10;CPS*2390*W04"></textarea>
       <div id="detectedSections" class="chips"></div>
-      <p class="plan-note">当前版本要求候选 Section 已提前点击 Add 加入 Plan；这样发现余位后可以直接进入 Register Now。</p>
+      <p class="plan-note">候选 Section 需提前加入 Plan。每次刷新后恢复目标学期，再打开对应课程详情读取余位／容量／候补人数。</p>
+      <label class="switch-field"><span><b>允许加入候补</b><small>候补有位置时只点击对应课程 Waitlist；加入后停止并通知</small></span><input id="allowWaitlist" type="checkbox" checked></label>
+      <div class="field"><label for="waitlistLimit">候补人数上限</label><input id="waitlistLimit" type="number" min="1" max="100" value="5"><small>按学校实际规则填写。1/30/5 只重点关注；候补人数低于此上限才尝试加入。0/30/0 等待课程余位。</small></div>
     </section>
 
     <section class="card settings-grid">
       <div id="intervalField" class="field">
-        <label for="interval">监控刷新间隔</label>
+        <label for="interval">普通监控刷新间隔</label>
         <div class="unit-input"><input id="interval" type="number" min="1" max="60" value="5"><span>秒</span></div>
+        <small>普通监控按此间隔检查全部课程；有重点课程时每 30 秒交替检查：重点一节 → 全部课程。运行中修改需先停止。</small>
       </div>
       <label class="switch-field">
-        <span><b>演练模式</b><small>不点击注册；空位监控会继续运行，定时模式到点后停止</small></span>
+        <span><b>演练模式</b><small>不点击注册或加入候补；空位监控会继续运行，定时模式到点后停止</small></span>
         <input id="dryRun" type="checkbox" checked>
       </label>
     </section>
@@ -110,6 +113,8 @@
     <section class="console-card">
       <div class="console-top"><span>运行状态</span><time id="lastCheck">尚未检查</time></div>
       <p id="message">等待你打开学校网站</p>
+      <p id="refreshCountdown" aria-live="off"></p>
+      <div id="monitorChecks" aria-live="polite"></div>
       <div class="progress"><span id="progressBar"></span></div>
     </section>
 
@@ -119,7 +124,7 @@
       <button id="testNotify" class="ghost">测试通知</button>
     </div>
 
-    <p class="footnote">真实提交前请先完成一次演练。满员时只刷新、不点击；检测到新余位才提交一次。遇到冲突、先修课、权限或学分限制时，助手会停止并通知你。</p>
+    <p class="footnote">真实提交前请先完成一次演练。无候补排队时，有新余位才尝试注册；有候补排队时，关注队列位置。Register Now 是全局入口，开始前请核对整个 Plan。遇到冲突、先修课、权限或学分限制时，助手会停止并通知你。</p>
   </main>
   <script type="module" src="/app.js"></script>
 </body>

@@ -11,7 +11,7 @@ export function extractSectionCodes(text = "") {
 
 export function parseAvailability(text = "") {
   const normalized = String(text).replace(/\s+/g, " ").trim();
-  const seats = normalized.match(/Seats?\s+Available\s*:?\s*(\d+)\s*\/\s*(\d+)\s*\/\s*(\d+)/i);
+  const seats = normalized.match(/Seats?\s+Available\s*:?\s*(?:Available\s*\/\s*Capacity\s*\/\s*Waitlisted\s*)?(\d+)\s*\/\s*(\d+)\s*\/\s*(\d+)/i);
   const full = /This\s+section\s+is\s+full|\bClosed\b/i.test(normalized);
   if (!seats) {
     return { available: null, capacity: null, waitlisted: null, full, raw: normalized };
@@ -27,7 +27,7 @@ export function parseAvailability(text = "") {
 
 export function classifyRegistrationMessage(text = "") {
   const normalized = String(text).replace(/\s+/g, " ").trim();
-  if (/Registered,?\s+but\s+not\s+started|Registration\s+(?:was\s+)?successful|Successfully\s+registered/i.test(normalized)) {
+  if (/^Registered$|Registered,?\s+but\s+not\s+started|Registration\s+(?:was\s+)?successful|Successfully\s+registered/i.test(normalized)) {
     return { kind: "success", message: normalized };
   }
   if (/section\s+is\s+full|no\s+seats|closed|capacity/i.test(normalized)) {

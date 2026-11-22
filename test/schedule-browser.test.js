@@ -12,8 +12,8 @@ test("real Chrome: reload defaults to Fall, restores Spring, then submits once",
       <meta charset="utf-8"><style>header{display:flex;gap:15px;align-items:center}button{height:45px;width:60px}#term{width:200px}#register,#remove{width:240px}</style>
       <header><button id="previous" disabled>‹</button><button id="next">›</button><span id="term">Fall 2026 Wenzhou</span><button>+</button><button id="remove">Remove Planned Courses</button><button id="register">Register Now</button></header>
       <main id="courses">Planned</main><script>
-      window.clickLog=[];
-      document.getElementById('next').onclick=()=>{clickLog.push('next');document.getElementById('courses').setAttribute('aria-busy','true');document.getElementById('term').innerText='Spring 2027 Wenzhou';setTimeout(()=>document.getElementById('courses').removeAttribute('aria-busy'),80)};
+      window.clickLog=[]; window.termIndex=0; const terms=['Fall 2026 Wenzhou','Winter 2027 Wenzhou','Spring 2027 Wenzhou'];
+      document.getElementById('next').onclick=()=>{clickLog.push('next');document.getElementById('courses').setAttribute('aria-busy','true');document.getElementById('term').innerText=terms[++window.termIndex];setTimeout(()=>document.getElementById('courses').removeAttribute('aria-busy'),80)};
       document.getElementById('remove').onclick=()=>{clickLog.push('REMOVE')};
       document.getElementById('register').onclick=()=>{clickLog.push('register:'+document.getElementById('term').innerText)};
       </script>` }));
@@ -30,11 +30,22 @@ test("real Chrome: reload defaults to Fall, restores Spring, then submits once",
     runner.finish = (phase) => { runner.resultPhase = phase; };
     runner.waitForScheduledResults = async () => [{ code: "PSY*1000*W06", kind: "success" }];
     await runner.runScheduledRegistration({ targetTerm: "Spring 2027 Wenzhou", dryRun: false }, ["PSY*1000*W06"]);
-    assert.deepEqual(await browser.page.evaluate(() => window.clickLog), ["next", "register:Spring 2027 Wenzhou"]);
+    assert.deepEqual(await browser.page.evaluate(() => window.clickLog), ["next", "next", "register:Spring 2027 Wenzhou"]);
     assert.equal(runner.resultPhase, "success");
     await runner.runScheduledRegistration({ targetTerm: "Spring 2027 Wenzhou", dryRun: true }, []);
-    assert.deepEqual(await browser.page.evaluate(() => window.clickLog), ["next"]);
+    assert.deepEqual(await browser.page.evaluate(() => window.clickLog), ["next", "next"]);
     assert.equal(runner.resultPhase, "dry-run");
+    runner.running = true;
+    runner.waitForNextRefresh = async () => {};
+    let inspections = 0;
+    runner.browser.inspectMonitoringSection = async () => {
+      assert.equal((await browser.readScheduleTerm()).term, "Spring 2027 Wenzhou");
+      if (++inspections === 3) runner.stopRequested = true;
+      return { found: true, availability: { available: 0, full: true } };
+    };
+    await runner.runLoop({ mode: "monitor", targetTerm: "Spring 2027 Wenzhou", selected: ["PSY*1000*W06"], dryRun: true, intervalMs: 1 });
+    assert.equal(inspections, 3);
+    assert.deepEqual(await browser.page.evaluate(() => window.clickLog), ["next", "next"]);
   } finally {
     await chrome.close();
   }

@@ -44,6 +44,10 @@ export class RegistrationRunner extends EventEmitter {
       processingSeenAt: null,
       results: [],
       targetTerm: null,
+      monitorChecks: [],
+      nextRefreshAt: null,
+      focusedSection: null,
+      nextCheckScope: "all",
     };
   }
 
@@ -54,7 +58,7 @@ export class RegistrationRunner extends EventEmitter {
 
   handleBrowserClose() {
     this.stopRequested = true;
-    this.publish({ phase: "idle", running: false, loggedIn: false, message: "浏览器已关闭，运行已停止" });
+    this.publish({ phase: "idle", running: false, nextRefreshAt: null, focusedSection: null, loggedIn: false, message: "浏览器已关闭，运行已停止" });
   }
 
   async ensureBrowser(kind = "chrome") {
@@ -122,9 +126,13 @@ export class RegistrationRunner extends EventEmitter {
     if (options.mode === "scheduled") {
       const startAt = new Date(`${options.startAt}+08:00`);
       if (Number.isNaN(startAt.getTime())) throw new Error("请输入有效的北京时间开放时间");
-      if (options.targetTerm && !/^(Spring|Summer|Fall|Winter)\s+\d{4}(?:\s+[\w .-]+)?$/i.test(options.targetTerm.trim())) throw new Error("请输入完整目标学期，例如 Spring 2027 Wenzhou");
     }
+    if (options.targetTerm && !/^(Spring|Summer|Fall|Winter)\s+\d{4}(?:\s+[\w .-]+)?$/i.test(options.targetTerm.trim())) throw new Error("请输入完整目标学期，例如 Spring 2027 Wenzhou");
+    const waitlistLimit = Number(options.waitlistLimit ?? 5);
+    if (!Number.isInteger(waitlistLimit) || waitlistLimit < 1 || waitlistLimit > 100) throw new Error("候补上限请输入 1–100 的整数");
     return {
+      allowWaitlist: options.allowWaitlist !== false,
+      waitlistLimit,
       url: options.url || DEFAULT_URL,
       selected,
       mode: options.mode,
@@ -155,6 +163,11 @@ export class RegistrationRunner extends EventEmitter {
       submittedAt: null,
       processingSeenAt: null,
       results: [],
+      monitorChecks: [],
+      nextRefreshAt: null,
+      focusedSection: null,
+      nextCheckScope: "all",
+      intervalSeconds: options.intervalMs / 1000,
       targetTerm: options.targetTerm || null,
       message: options.dryRun ? "演练模式启动中" : "真实提交模式启动中",
     });
@@ -197,36 +210,118 @@ export class RegistrationRunner extends EventEmitter {
       return;
     }
 
+    const initialTerm = await this.waitForScheduleTerm();
+    const targetTerm = options.targetTerm || initialTerm.term;
+    options = { ...options, targetTerm };
+    this.publish({ targetTerm });
     let refreshCount = 0;
+    let focusedSection = null;
+    let focusedOnly = false;
     while (!this.stopRequested) {
       if (refreshCount > 0) {
-        await this.waitForNextRefresh(options.intervalMs);
+        await this.waitForNextRefresh(focusedSection ? 30_000 : options.intervalMs);
         if (this.stopRequested) return;
         this.publish({ phase: "refreshing", message: `正在刷新课程页面（第 ${refreshCount + 1} 次）…` });
         await this.reloadForMonitoring();
         if (this.stopRequested) return;
       }
+      if (!await this.refreshLoginState()) {
+        this.finish("login", "刷新后登录已失效，请重新登录", true);
+        return;
+      }
       refreshCount += 1;
-      for (const code of options.selected) {
+      let nextFocus = null;
+      const focusOnlyThisRound = Boolean(focusedSection && focusedOnly);
+      for (const code of focusOnlyThisRound ? [focusedSection] : options.selected) {
         if (this.stopRequested) return;
-        const snapshot = await this.inspectSection(code);
-        const gate = this.evaluateSeatTrigger(code, snapshot.availability);
+        await this.restoreScheduleTerm(targetTerm);
+        if (this.stopRequested) return;
+        const snapshot = await this.browser.inspectMonitoringSection(code, targetTerm, () => this.stopRequested);
+        if (this.stopRequested) return;
+        const availability = parseAvailability(snapshot.availabilityText || "");
+        const decision = this.monitorDecision(snapshot, availability, options);
+        if (!nextFocus && (decision.hot || (focusedSection === code && (decision.intent || decision.unknown)))) nextFocus = code;
+        const gate = this.evaluateMonitorTrigger(code, decision);
+        const counter = availability.available === null ? "余位未知" : `${availability.available}/${availability.capacity}/${availability.waitlisted}`;
+        const message = `${code}：${counter}；${decision.message}${gate.repeated ? "；已尝试过，等待新的机会" : ""}`;
+        const check = { code, ...availability, status: decision.intent || "waiting", message, checkedAt: new Date().toISOString() };
         this.publish({
-          phase: "monitoring",
-          lastCheck: new Date().toISOString(),
-          refreshCount,
-          message: snapshot.found
-            ? snapshot.availability.available > 0 && !gate.shouldAttempt
-              ? `${code}：页面仍显示 ${snapshot.availability.available} 个余位，已触发过一次；继续刷新确认，不重复点击`
-              : `${code}：${snapshot.availability.available ?? "未知"} 个余位；继续后台刷新`
-            : `${code}：当前页面没有找到该 Section`,
+          phase: "monitoring", lastCheck: check.checkedAt, refreshCount, message,
+          monitorChecks: [...this.state.monitorChecks.filter((item) => item.code !== code), check],
         });
-        if (snapshot.found && gate.shouldAttempt) {
-          await this.attemptRegistration(options, code, `发现 ${snapshot.availability.available} 个余位`);
+        if (gate.shouldAttempt) {
+          await this.attemptMonitorAction(options, code, decision.intent, message);
           if (!this.running || this.stopRequested) return;
         }
       }
+      focusedSection = nextFocus;
+      focusedOnly = Boolean(focusedSection) && !focusOnlyThisRound;
+      this.publish({ focusedSection, nextCheckScope: focusedOnly ? "focused" : "all" });
     }
+  }
+
+  monitorDecision(snapshot, availability, options) {
+    const result = (intent, message, hot = false) => ({ intent, message, hot });
+    if (!snapshot.found) return result(null, "目标学期未找到该班次，继续刷新");
+    if (snapshot.registered) return result(null, "已注册，不重复提交");
+    if (availability.available === null || availability.waitlisted === null) return { ...result(null, "详情余位未识别，不提交"), unknown: true };
+    if (snapshot.waitlisted) {
+      if (availability.available > 0 && snapshot.canRegister) return result("register", "已在候补中，学校已显示可注册按钮");
+      return result(null, "已在候补中，等待学校开放注册", availability.available > 0);
+    }
+    if (availability.waitlisted > 0) {
+      if (options.allowWaitlist !== false && availability.waitlisted < (options.waitlistLimit ?? 5)) return result("waitlist", "候补队列有位置，准备加入候补");
+      return result(null, availability.available > 0 ? "余位可能留给队首；重点关注候补人数变化" : "候补仍满或未启用加入候补，继续等待", availability.available > 0);
+    }
+    if (availability.available > 0) return result("register", "无候补排队且有余位，准备注册");
+    return result(null, "课程无余位，继续刷新");
+  }
+
+  evaluateMonitorTrigger(code, decision) {
+    const key = `monitor:${code}`;
+    const previous = this.seatGates.get(key);
+    if (decision.unknown) return { shouldAttempt: false };
+    if (!decision.intent) { this.seatGates.delete(key); return { shouldAttempt: false }; }
+    if (previous === decision.intent) return { shouldAttempt: false, repeated: true };
+    this.seatGates.set(key, decision.intent);
+    return { shouldAttempt: true };
+  }
+
+  async attemptMonitorAction(options, code, intent, reason) {
+    const actionName = intent === "waitlist" ? "加入候补" : "注册";
+    if (options.dryRun) {
+      await this.capture(`dry-run-${intent}-${code}`);
+      notify("抢课助手演练", `${code} 可以尝试${actionName}；演练未提交`);
+      this.publish({ phase: "monitoring", message: `${reason}；演练未点击${actionName}，继续刷新` });
+      return;
+    }
+    if (this.stopRequested) return;
+    const clickedAt = Date.now();
+    const result = await this.browser.monitorOperation({ action: "submit", code, expectedTerm: options.targetTerm, intent });
+    if (!result.safe) throw new Error("提交前目标学期不一致或仍在加载，已停止，未提交");
+    if (!result.clicked) {
+      this.seatGates.delete(`monitor:${code}`);
+      this.publish({ phase: "monitoring", message: `${code}：${actionName}按钮当前不可用，等待新机会，不重复点击` });
+      return;
+    }
+    this.publish({ phase: "submitting", submittedAt: new Date(clickedAt).toISOString(), message: `${code} 已提交${actionName}一次，等待学校结果…` });
+    const deadline = clickedAt + 60_000;
+    while (!this.stopRequested && Date.now() < deadline) {
+      const processing = await this.browser.registrationProcessingState();
+      if (processing.active) { await this.browser.wait(200); continue; }
+      const state = await this.browser.monitorOperation({ code, expectedTerm: options.targetTerm });
+      if (!state.safe) throw new Error("提交后无法确认目标学期，请人工核对结果；不会重复提交");
+      if (state.registered || (intent === "waitlist" && state.waitlisted)) {
+        const kind = state.registered ? "success" : "waitlisted";
+        const message = state.registered ? "注册成功" : "已加入候补（尚未注册成功）";
+        this.publish({ results: [{ code, kind, message }] });
+        await this.capture(`result-${intent}-${code}`);
+        this.finish(kind, `${code} ${message}`, true);
+        return;
+      }
+      await this.browser.wait(200);
+    }
+    if (!this.stopRequested) this.finish("error", `${code} 提交后未确认注册或候补成功，已停止，请在学校页面核对；不会重复提交`, true);
   }
 
   evaluateSeatTrigger(code, availability) {
@@ -249,13 +344,15 @@ export class RegistrationRunner extends EventEmitter {
 
   async waitForNextRefresh(intervalMs) {
     const deadline = Date.now() + intervalMs;
+    this.publish({ phase: "waiting-refresh", nextRefreshAt: new Date(deadline).toISOString(), message: this.state.focusedSection ? `重点关注 ${this.state.focusedSection}：等待 ${intervalMs / 1000} 秒后刷新，${this.state.nextCheckScope === "focused" ? "本轮仅检查此班次，下轮检查全部课程" : "本轮检查全部目标课程"}` : `本轮检查完成，等待 ${intervalMs / 1000} 秒后刷新，检查全部目标班次` });
     while (!this.stopRequested && Date.now() < deadline) {
-      await delay(Math.min(250, deadline - Date.now()));
+      await delay(Math.max(0, Math.min(250, deadline - Date.now())));
     }
+    this.publish({ nextRefreshAt: null });
   }
 
   async reloadForMonitoring() {
-    await this.browser.reload().catch(() => {});
+    await this.browser.reload();
     await this.browser.wait(700);
   }
 
@@ -387,7 +484,8 @@ export class RegistrationRunner extends EventEmitter {
 
     const baselineNotices = await this.browser.alertTexts().catch(() => []);
     const clickedAt = Date.now();
-    const clicked = await this.clickRegisterNow();
+    if (this.stopRequested) return;
+    const clicked = await this.clickRegisterNow(options.targetTerm);
     if (!clicked) {
       this.finish("error", "没有找到 Register Now，请确认当前位于 Schedule 页面", true);
       return;
@@ -485,8 +583,8 @@ export class RegistrationRunner extends EventEmitter {
   finish(phase, message, alertUser) {
     this.running = false;
     this.stopRequested = true;
-    this.publish({ phase, message, running: false, lastCheck: new Date().toISOString() });
-    if (alertUser) notify(phase === "success" ? "抢课成功" : "抢课助手已停止", message, phase === "success" ? "Glass" : "Basso");
+    this.publish({ phase, message, running: false, nextRefreshAt: null, focusedSection: null, lastCheck: new Date().toISOString() });
+    if (alertUser) notify(phase === "success" ? "抢课成功" : phase === "waitlisted" ? "已加入候补" : "抢课助手已停止", message, ["success", "waitlisted"].includes(phase) ? "Glass" : "Basso");
   }
 
   formatDuration(ms) {

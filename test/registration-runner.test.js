@@ -225,3 +225,77 @@ test("scheduled results retain success, full, conflict and unknown separately", 
     Date.now = originalNow;
   }
 });
+
+test("monitor restores Spring through Winter after each refresh before inspecting seats", async () => {
+  const runner = new RegistrationRunner({ rootDir: "/tmp/course-assistant-test" });
+  const terms = ["Fall 2026 Wenzhou", "Winter 2027 Wenzhou", "Spring 2027 Wenzhou"];
+  let index = 2;
+  let reads = 0;
+  let reloads = 0;
+  let arrows = 0;
+  runner.refreshLoginState = async () => true;
+  runner.waitForNextRefresh = async () => {};
+  runner.browser = {
+    readScheduleTerm: async () => ({ term: terms[index], busy: false }),
+    navigateScheduleTerm: async (direction, term) => {
+      assert.equal(direction, "next");
+      assert.equal(term, terms[index]);
+      index++;
+      arrows++;
+      return { clicked: true };
+    },
+    reload: async () => { index = 0; reloads++; },
+    wait: async () => {},
+  };
+  runner.browser.inspectMonitoringSection = async () => {
+    assert.equal(terms[index], terms[2]);
+    if (++reads === 3) runner.stopRequested = true;
+    return { found: true, availability: { available: 0, full: true } };
+  };
+  await runner.runLoop({ mode: "monitor", selected: ["CPS*2390*W03"], intervalMs: 1, dryRun: true });
+  assert.equal(reads, 3);
+  assert.equal(reloads, 2);
+  assert.equal(arrows, 4);
+  assert.equal(runner.state.targetTerm, terms[2]);
+});
+
+test("monitor refuses to inspect seats or submit if target term cannot be restored", async () => {
+  const runner = new RegistrationRunner({ rootDir: "/tmp/course-assistant-test" });
+  runner.refreshLoginState = async () => true;
+  runner.browser = {
+    readScheduleTerm: async () => ({ term: "Fall 2026 Wenzhou", busy: false }),
+    navigateScheduleTerm: async () => ({ clicked: false }),
+  };
+  runner.inspectSection = async () => assert.fail("wrong term must not be inspected");
+  runner.clickRegisterNow = async () => assert.fail("wrong term must not be submitted");
+  await assert.rejects(runner.runLoop({ mode: "monitor", targetTerm: "Spring 2027 Wenzhou", selected: ["CPS*2390*W03"] }), /无法切换/);
+});
+
+test("monitor stops reading after refreshed login expires", async () => {
+  const runner = new RegistrationRunner({ rootDir: "/tmp/course-assistant-test" });
+  let loggedIn = true;
+  let reads = 0;
+  runner.refreshLoginState = async () => loggedIn;
+  runner.waitForScheduleTerm = async () => ({ term: "Spring 2027 Wenzhou" });
+  runner.restoreScheduleTerm = async () => {};
+  runner.waitForNextRefresh = async () => {};
+  runner.browser = { reload: async () => { loggedIn = false; }, wait: async () => {} };
+  runner.browser.inspectMonitoringSection = async () => { reads++; return { found: true, availability: { available: 0, full: true } }; };
+  runner.finish = (phase) => { runner.resultPhase = phase; runner.stopRequested = true; };
+  await runner.runLoop({ mode: "monitor", selected: ["CPS*2390*W03"], intervalMs: 1 });
+  assert.equal(reads, 1);
+  assert.equal(runner.resultPhase, "login");
+});
+
+test("legacy submit helper passes the full target term into the atomic submit check", async () => {
+  const runner = new RegistrationRunner({ rootDir: "/tmp/course-assistant-test" });
+  runner.browser = { alertTexts: async () => [] };
+  runner.clickRegisterNow = async (term) => { assert.equal(term, "Spring 2027 Wenzhou"); return false; };
+  runner.finish = () => {};
+  await runner.attemptRegistration({ mode: "monitor", targetTerm: "Spring 2027 Wenzhou", dryRun: false }, "CPS*2390*W03", "发现余位");
+});
+
+test("monitor validates an explicitly supplied target term", () => {
+  const runner = new RegistrationRunner({ rootDir: "/tmp/course-assistant-test" });
+  assert.throws(() => runner.validateOptions({ mode: "monitor", sections: ["CPS*2390*W03"], targetTerm: "invalid" }), /完整目标学期/);
+});
